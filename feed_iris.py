@@ -66,7 +66,7 @@ def Richiesta_remwsgwy (framedati):
     #funzione di colloquio con il remws: manda la dichiesta e decodifica la risposta
     global TIMEOUT,esito
     richiesta={
-        'header':{'id': 10},
+        'header':{'id': 13},
         'data':{'sensors_list':[framedati]}
         }
     ci_sono_dati=False
