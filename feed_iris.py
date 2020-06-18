@@ -21,7 +21,7 @@ import requests
 IRIS_TABLE_NAME='m_osservazioni_tr'
 IRIS_SCHEMA_NAME='realtime'
 AUTORE=os.getenv('COMPUTERNAME')
-MINUTES=5 # minuti di recupero 
+MINUTES=5 # minuti di recupero
 if (AUTORE==None):
     AUTORE=os.getenv('NAME')
     IRIS_USER_ID=os.getenv('IRIS_USER_ID')
@@ -32,9 +32,11 @@ if (AUTORE==None):
     DEBUG=eval(os.getenv('DEBUG'))
     MINUTES=int(os.getenv('MINUTES')) #il valore viene sovrascritto dalla variabile d'ambiente (paramentro in launch_feed.sh)
     REMWS_GATEWAY=os.getenv('REMWS_GATEWAY')
+    TIMEOUT=int(os.getenv('TIMEOUT'))
     # trasformo la stringa in lista
-
-url=REMWS_GATEWAY    
+if (DEBUG):
+    print("...inizio processo...")
+url=REMWS_GATEWAY
 TIPOLOGIE=h.split()
 # inizializzazione delle date: datafine è in UTC+1
 datafine=dt.datetime.utcnow()+dt.timedelta(minutes=60)
@@ -62,13 +64,15 @@ def Inserisci_in_realtime(schema,table,idsensore,tipo,operatore,datar,misura,aut
     return Query_Insert
 def Richiesta_remwsgwy (framedati):
     #funzione di colloquio con il remws: manda la dichiesta e decodifica la risposta
+    global TIMEOUT,esito
     richiesta={
-        'header':{'id': 10},
+        'header':{'id': 13},
         'data':{'sensors_list':[framedati]}
         }
     ci_sono_dati=False
     try:
-       r=requests.post(url,data=js.dumps(richiesta),timeout=5)
+       r=requests.post(url,data=js.dumps(richiesta),timeout=TIMEOUT)
+       esito['richiesti']+=1
        if(len(r.text)>0):
           risposta=js.loads(r.text)
           #controllo progressivamente se la risposta è buona e se ci sono dati
@@ -86,16 +90,22 @@ def Richiesta_remwsgwy (framedati):
                             ci_sono_dati=True
                  # chiude ciclo esame dati
        else:
+            esito['mancanti']+=1
             return []
     except:
-        print("Errore: REMWS non raggiungibile", end="\r")
-    
+        esito['errori']+=1
+        if(DEBUG):
+            print("Errore: REMWS non raggiungibile", end="\r")
+
     if(ci_sono_dati):
         # estraggo il dato
+        esito['ricevuti']+=1
         return candidate
     else:
+        esito['mancanti']+=1
         return []
 ###
+
 #FASE 2 - query al dB
 engine = create_engine('postgresql+pg8000://'+IRIS_USER_ID+':'+IRIS_USER_PWD+'@'+IRIS_DB_HOST+'/'+IRIS_DB_NAME)
 conn=engine.connect()
@@ -103,7 +113,8 @@ conn=engine.connect()
 #preparazione dell'elenco dei sensori
 Query='Select *  from "dati_di_base"."anagraficasensori" where "anagraficasensori"."datafine" is NULL and idrete in (1,2,4);'
 df_sensori=pd.read_sql(Query, conn)
-
+if (DEBUG):
+    print("...accesso al dB sensori eseguito....")
 
 #ALIMETAZIONE DIRETTA
 # suppongo di non avere ancora chisto dati, vedo qule dato devo chiedere, lo chiedo e loinserisco.
@@ -115,7 +126,8 @@ data_ricerca=dt.datetime(datainizio.year,datainizio.month,datainizio.day,dataini
 ora=dt.datetime(datainizio.year,datainizio.month,datainizio.day,datainizio.hour,0,0)
 df_section=df_sensori[df_sensori.nometipologia.isin(TIPOLOGIE)].sample(frac=1)
 # aggiunto sort casuale per parallelizzazione
-
+if (DEBUG):
+    print("...inizio ciclo sensori...")
 #ciclo sui sensori:
 # strutturo la richiesta
 id_operatore=1
@@ -129,12 +141,14 @@ frame_dati["finish"]=data_ricerca.strftime("%Y-%m-%d %H:%M")
 s=dt.datetime.now()
 conn=engine.connect()
 regole={}
+esito={'richiesti':0,'ricevuti':0,'inseriti':0,'errori':0,'mancanti':0,'db_err':0}
 # inizio del ciclo vero e proprio
 for row in df_section.itertuples():
     # controllo quanto tempo è passato: le alimentazioni possono durare al massimo 10'
     timeDiff=dt.datetime.now()-s
     durata_script=timeDiff.total_seconds() / 60
     if (durata_script>10):
+        print(f"Esito {esito} per {TIPOLOGIE} inizio {s} fine {dt.datetime.now()}")
         sys.exit("Esecuzione troppo lunga - interrompo!")
     frame_dati["sensor_id"]=row.idsensore
     data_insert=data_ricerca
@@ -159,7 +173,7 @@ for row in df_section.itertuples():
              function=1
              id_periodo=1
         frame_dati["start"]=data_ricerca.strftime("%Y-%m-%d %H:%M")
-        frame_dati["finish"]=data_ricerca.strftime("%Y-%m-%d %H:%M")     
+        frame_dati["finish"]=data_ricerca.strftime("%Y-%m-%d %H:%M")
     if(row.nometipologia=='PP'):
         id_operatore=4
         function=3
@@ -168,7 +182,7 @@ for row in df_section.itertuples():
     else:
          id_operatore=1
          function=1
-            
+
     frame_dati["operator_id"]=id_operatore
     frame_dati["function_id"]=function
     frame_dati["granularity"]=id_periodo
@@ -192,7 +206,7 @@ for row in df_section.itertuples():
             print ("Attenzione: dato di ",TIPOLOGIE, "sensore ", row.idsensore,data_insert, "ASSENTE nel REM")
     # prima di chiudere il ciclo chiedo la raffica del vento
     if(row.nometipologia=='VV' or row.nometipologia=='DV'):
-        id_operatore=3         
+        id_operatore=3
         frame_dati["operator_id"]=id_operatore
         aa=Richiesta_remwsgwy(frame_dati)
         if (len(aa)>2):
@@ -203,13 +217,15 @@ for row in df_section.itertuples():
             row.idsensore,row.nometipologia,id_operatore,data_insert,misura,AUTORE)
             try:
                 conn.execute(QueryInsert)
+                esito['inseriti']+=1
                 if (DEBUG):
                     print("+++",row.idsensore,data_ricerca,misura)
             except:
-                        if(DEBUG):
-                            print("Query non riuscita! per ",row.idsensore)
+                esito['db_err']+=1
+                if(DEBUG):
+                    print("Query non riuscita! per ",row.idsensore)
         else:
             if (DEBUG):
                 print ("Attenzione: dato di ",TIPOLOGIE, "sensore ", row.idsensore, "ASSENTE nel REM")
     #fine ciclo sensore
-print("Alimentazione terminata per",TIPOLOGIE,"inizio",s,"fine", dt.datetime.now())
+print(f"Esito {esito} per {TIPOLOGIE} inizio {s} fine {dt.datetime.now()}")

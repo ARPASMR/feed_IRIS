@@ -8,7 +8,7 @@
 
 # FASE 1
 #inizializzazione
-import os
+import os,sys
 import pandas as pd
 # import numpy as np
 from sqlalchemy import *
@@ -29,9 +29,10 @@ if (AUTORE==None):
     IRIS_DB_NAME=os.getenv('IRIS_DB_NAME')
     IRIS_DB_HOST=os.getenv('IRIS_DB_HOST')
     h=os.getenv('TIPOLOGIE') # elenco delle tipologie da cercare nella tabella delle osservazioni realtime, è una stringa
-    DEBUG=os.getenv('DEBUG')
+    DEBUG=eval(os.getenv('DEBUG'))
     MINUTES=int(os.getenv('MINUTES'))
     REMWS_GATEWAY=os.getenv('REMWS_GATEWAY')
+    TIMEOUT=int(os.getenv('TIMEOUT'))
     # trasformo la stringa in lista
 
 url=REMWS_GATEWAY
@@ -39,8 +40,8 @@ TIPOLOGIE=h.split()
 # inizializzazione delle date
 datafine=dt.datetime.utcnow()+dt.timedelta(hours=1)
 datainizio=datafine-dt.timedelta(minutes=MINUTES)
-if (eval(DEBUG)):
-    logging.debug(eval(DEBUG))
+if (DEBUG):
+    print(f"Inizio attività di {AUTORE}")
 #definizione delle funzioni
 # la funzione legge il blocco di dati e lo trasforma in DataFrame
 def seleziona_richiesta(Risposta):
@@ -63,14 +64,19 @@ def Inserisci_in_realtime(schema,table,idsensore,tipo,operatore,datar,misura,aut
     datar.strftime("%Y-%m-%d %H:%M")+"',"+str(misura)+",'"+ autore+"','"+mystring+"');"
     return Query_Insert
 def Richiesta_remwsgwy (framedati):
+    global esito
     #funzione di colloquio con il remws: manda la dichiesta e decodifica la risposta
     richiesta={
-        'header':{'id': 10},
+        'header':{'id': 13},
         'data':{'sensors_list':[framedati]}
         }
     ci_sono_dati=False
     try:
-        r=requests.post(url,data=js.dumps(richiesta),timeout=5)
+        t0=dt.datetime.now()
+        r=requests.post(url,data=js.dumps(richiesta),timeout=TIMEOUT)
+        t1=dt.datetime.now()
+        t_delta=t1-t0
+        esito['time']+=t_delta.total_seconds()
         if(len(r.text)>0):
                 risposta=js.loads(r.text)
                 #controllo progressivamente se la risposta è buona e se ci sono dati
@@ -95,11 +101,13 @@ def Richiesta_remwsgwy (framedati):
         else:
                 return []
     except:
-        print("Errore: REMWS non raggiungibile", end="\r\n")
-        logging.error("REMWSGWY non raggiungibile")
+        if(DEBUG):
+            print("Errore: REMWS non raggiungibile", file=sys.stderr)
         return []
-    
+
 ###
+if (DEBUG):
+    print("...inizio richiesta db...")
 #FASE 2 - query al dB
 engine = create_engine('postgresql+pg8000://'+IRIS_USER_ID+':'+IRIS_USER_PWD+'@'+IRIS_DB_HOST+'/'+IRIS_DB_NAME)
 conn=engine.connect()
@@ -120,7 +128,10 @@ df_dati=pd.read_sql(QueryDati, conn)
 minuto=int(datainizio.minute/10)*10
 data_ricerca=dt.datetime(datainizio.year,datainizio.month,datainizio.day,datainizio.hour,minuto,0)
 data_elimina=data_ricerca - dt.timedelta(days=15)
-df_section=df_sensori[df_sensori.nometipologia.isin(TIPOLOGIE)]
+# aggiunto sort casuale per parallelizzazione
+df_section=df_sensori[df_sensori.nometipologia.isin(TIPOLOGIE)].sample(frac=1)
+if (DEBUG):
+    print("...inizio ciclo sensori...")
 #ciclo sui sensori:
 # strutturo la richiesta
 id_operatore=1
@@ -132,12 +143,29 @@ frame_dati["start"]=data_ricerca.strftime("%Y-%m-%d %H:%M")
 frame_dati["finish"]=data_ricerca.strftime("%Y-%m-%d %H:%M")
 #suppongo che in df_section ci siano solo i sensori che mi interessano e faccio il ciclo di richiesta
 s=dt.datetime.now()
-conn=engine.connect()
+esito={'richiesti':0,'ricevuti':0,'inseriti':0,'errori':0,'mancanti':0,'db_err':0,'time':0}
+
 # inizio del ciclo vero e proprio
+stampa_esito=dt.datetime.now()
 for row in df_section.itertuples():
+    timeDiff=dt.datetime.now()-s
+    timeDiff_esito=dt.datetime.now()-stampa_esito
+    durata_script=(timeDiff.total_seconds() / 60)
+    if (durata_script>45):
+            print(f"Esito {esito} per {TIPOLOGIE} inizio {s} fine {dt.datetime.now()}")
+            sys.exit("Esecuzione troppo lunga - interrompo!")
+
+    # ogni 10 minuti stampo l'Esito (e rifaccio la query)
+    if (timeDiff_esito.total_seconds() > 600):
+        df_dati=pd.read_sql(QueryDati, conn)
+        print(f"....{esito}")
+        stampa_esito=dt.datetime.now()
+        if(len(df_dati.index)==0):
+            sys.exit("Dataframe vuoto - interrompo!")
     #estraggo i dati dal dataframe
     element=df_dati[df_dati.idsensore==row.idsensore]
     frame_dati["sensor_id"]=row.idsensore
+
     #frequenza 5 minuti
     if(row.frequenza==60):
         id_periodo=3
@@ -150,7 +178,7 @@ for row in df_section.itertuples():
             id_operatore=1
             PERIODO=int(MINUTES/5)
             attesi=pd.date_range(data_ricerca, periods=PERIODO,freq='5min')
-        else:    
+        else:
             id_periodo=1
             PERIODO=int(MINUTES/10)
             attesi=pd.date_range(data_ricerca, periods=PERIODO,freq='10min')
@@ -165,7 +193,7 @@ for row in df_section.itertuples():
          id_operatore=1
          function=1
     #selezione del valore orario se la frequenza è 60
-    
+
     #ho selezionato il periodo atteso: estraggo il dataframe degli elementi attesi
     df=attesi.isin(element['data_e_ora'])
     #eseguo il ciclo di richiesta sui dati mancanti
@@ -177,6 +205,7 @@ for row in df_section.itertuples():
         frame_dati["granularity"]=id_periodo
         try:
             aa=Richiesta_remwsgwy(frame_dati)
+            esito['richiesti']+=1
         except:
             aa=[]
         if (len(aa)>2):
@@ -184,19 +213,23 @@ for row in df_section.itertuples():
             misura=aa[1]['datarow'].split(";")[1]
             QueryInsert=Inserisci_in_realtime(IRIS_SCHEMA_NAME,IRIS_TABLE_NAME,\
             row.idsensore,row.nometipologia,id_operatore,dato_mancante,misura,AUTORE)
+
             try:
                 conn.execute(QueryInsert)
-                if (eval(DEBUG)):
-                    logging.info("+++++++Query eseguita per "+str(row.idsensore)+" "+ dato_mancante.strftime("%Y-%m-%d %H:%M"))
+                esito['inseriti']+=1
+                if (DEBUG):
+                    print("+++++++Query eseguita per "+str(row.idsensore)+" "+ dato_mancante.strftime("%Y-%m-%d %H:%M"))
             except:
-                if (eval(DEBUG)):
-                    logging.error(QueryInsert+"non riuscita! per "+str(row.idsensore)+" "+ dato_mancante.strftime("%Y-%m-%d %H:%M"))
+                esito['db_err']+=1
+                if (DEBUG):
+                    print(QueryInsert+"non riuscita! per "+str(row.idsensore)+" "+ dato_mancante.strftime("%Y-%m-%d %H:%M"),file=sys.stderr)
         else:
-            if (eval(DEBUG)):
-                logging.warning("Attenzione: dato di "+str(row.idsensore)+ " ASSENTE nel REM per "+ dato_mancante.strftime("%Y-%m-%d %H:%M"))
+            esito['mancanti']+=1
+            if (DEBUG):
+                print("Attenzione: dato di "+str(row.idsensore)+ " ASSENTE nel REM per "+ dato_mancante.strftime("%Y-%m-%d %H:%M"),file=sys.stderr)
      # prima di chiudere il ciclo chiedo la raffica del vento
     if(row.nometipologia=='VV' or row.nometipologia=='DV'):
-        id_operatore=3         
+        id_operatore=3
         frame_dati["operator_id"]=id_operatore
         try:
             aa=Richiesta_remwsgwy(frame_dati)
@@ -210,21 +243,21 @@ for row in df_section.itertuples():
             row.idsensore,row.nometipologia,id_operatore,data_ricerca,misura,AUTORE)
             try:
                 conn.execute(QueryInsert)
-                if (eval(DEBUG)):
-                    logging.info("+++"+str(row.idsensore)+" "+ data_ricerca+" "+str(misura))
+                if (DEBUG):
+                    print ("+++"+str(row.idsensore)+" "+ data_ricerca+" "+str(misura))
             except:
-                        if(eval(DEBUG)):
-                            logging.error("Query non riuscita! per "+str(row.idsensore))
+
+                if(DEBUG):
+                    print(f"Query non riuscita! per {str(row.idsensore)}",file=sys.stderr)
         else:
-            if (eval(DEBUG)):
-                logging.warning("Attenzione: dato di "+h+ " sensore "+str( row.idsensore)+ " ASSENTE nel REM")
+            if (DEBUG):
+                print("Attenzione: dato di "+h+ " sensore "+str( row.idsensore)+ " ASSENTE nel REM",file=sys.stderr)
     #fine ciclo sensore
 QueryDelete='DELETE FROM '+'"'+IRIS_SCHEMA_NAME+'"."'+IRIS_TABLE_NAME+'"' +' WHERE data_e_ora <'+"'"+data_elimina.strftime("%Y-%m-%d %H:%M")+"'"
 try:
     conn.execute(QueryDelete)
-    if (eval(DEBUG)):
-        logging.info("+++pulizia dati eseguita")
+    if (DEBUG):
+       print("...pulizia dati eseguita")
 except:
-    logging.error("ERR: Pulizia dati non riuscita")
-print("Recupero terminato per",TIPOLOGIE,"inizio",s,"fine", dt.datetime.now())
-logging.info("Recupero terminato per {0} inizio "+s.strftime("%Y-%m-%d %H:%M:%s")+ " fine "+ dt.datetime.now().strftime("%Y-%m-%d %H:%M:%s"),format(h))
+    print ("ERRORE: Pulizia dati non riuscita",file=sys.stderr)
+print(f"Esito {esito} per {TIPOLOGIE} inizio {s} fine {dt.datetime.now()}")
