@@ -67,7 +67,7 @@ def Richiesta_remwsgwy (framedati):
     global esito
     #funzione di colloquio con il remws: manda la dichiesta e decodifica la risposta
     richiesta={
-        'header':{'id': 10},
+        'header':{'id': 13},
         'data':{'sensors_list':[framedati]}
         }
     ci_sono_dati=False
