@@ -4,6 +4,7 @@
 # il primo argomento è il minuto in cui eseguire il comando ogni 10 minuti
 # il secondo argomento è in caso di recupero: mettere comunque una lettera diversa da 'R'
 # in caso di recupero esegue lo script e POI si ferma per un tempo determinato dal terzo parametro
+# 01/12/2020 Vargiu. In caso si voglia recuperare solo una data particolare, prevedo un 4 argomento "S" di uscita dal ciclo.  
 nomescript=${0##*/}
 if [ $3 > 0 ]
 then
@@ -18,15 +19,24 @@ do
    then
      logger -is -p user.notice "$nomescript: eseguo alimentazione al minuto $1 per $TIPOLOGIE"
      echo "Eseguo alimentazione diretta per $TIPOLOGIE"
-      python3 feed_iris.py
+     python3 feed_iris.py
    else
      sleep 30
    fi
    if [ $2 == "R" ]
    then
-     echo "Eeguo recupero per $TIPOLOGIE"
+     echo "Eseguo recupero per $TIPOLOGIE"
      logger -is -p user.notice "$nomescript: eseguo recupero per $TIPOLOGIE"
      python3 feed_iris_recupero.py
-     sleep $dormi
+
+	 if [ "$2$4" == "RS" ]
+     then
+       echo "Esco da $nomescript"
+	   break
+	 else 
+       sleep $dormi
+     fi 	   
    fi
 done
+
+sleep 30
