@@ -32,13 +32,37 @@ if (AUTORE==None):
     DEBUG=os.getenv('DEBUG')
     MINUTES=int(os.getenv('MINUTES'))
     REMWS_GATEWAY=os.getenv('REMWS_GATEWAY')
-    # trasformo la stringa in lista
 
-url=REMWS_GATEWAY
+
+# variabile per gestire id_rete 
+ID_RETE=os.getenv('ID_RETE')
+if ID_RETE is None:
+    SID_RETE = '(1,2,4)'
+else:
+    SID_RETE = '(' + ID_RETE + ')'
+
+# trasformo la stringa in lista
 TIPOLOGIE=h.split()
-# inizializzazione delle date
-datafine=dt.datetime.utcnow()+dt.timedelta(hours=1)
+url=REMWS_GATEWAY
+
+# Check se si vogliono eliminare i dati passati (default True)
+DEL_PAST_DATA=os.getenv('DEL_PAST_DATA')
+if DEL_PAST_DATA is None:
+    purge = True
+else:
+    purge = eval(DEL_PAST_DATA)
+
+# inizializzazione delle date: check se voglio recuoerare una data particolare  
+DATAFINE=os.getenv('DATAFINE')
+if DATAFINE is None:
+    datafine = dt.datetime.utcnow()+dt.timedelta(hours=1)   
+else: 
+    datafine = dt.datetime.strptime(DATAFINE,"%Y%m%d%H%M")
+    # aggiungo 10 minuti per comprendere l'orario immesso in DATAFINE nel recupero.
+    datafine = datafine+dt.timedelta(minutes=10)
+
 datainizio=datafine-dt.timedelta(minutes=MINUTES)
+
 if (eval(DEBUG)):
     logging.debug(eval(DEBUG))
 #definizione delle funzioni
@@ -70,7 +94,7 @@ def Richiesta_remwsgwy (framedati):
         }
     ci_sono_dati=False
     try:
-        r=requests.post(url,data=js.dumps(richiesta),timeout=5)
+        r=requests.post(url,data=js.dumps(richiesta),timeout=5) 
         if(len(r.text)>0):
                 risposta=js.loads(r.text)
                 #controllo progressivamente se la risposta è buona e se ci sono dati
@@ -105,7 +129,7 @@ engine = create_engine('postgresql+pg8000://'+IRIS_USER_ID+':'+IRIS_USER_PWD+'@'
 conn=engine.connect()
 
 #preparazione dell'elenco dei sensori
-Query='Select *  from "dati_di_base"."anagraficasensori" where "anagraficasensori"."datafine" is NULL and idrete in (1,2,4);'
+Query='Select *  from "dati_di_base"."anagraficasensori" where "anagraficasensori"."datafine" is NULL and idrete in ' + SID_RETE +';'
 df_sensori=pd.read_sql(Query, conn)
 
 #query di richiesta dati già presenti nel dB
@@ -120,7 +144,8 @@ df_dati=pd.read_sql(QueryDati, conn)
 minuto=int(datainizio.minute/10)*10
 data_ricerca=dt.datetime(datainizio.year,datainizio.month,datainizio.day,datainizio.hour,minuto,0)
 data_elimina=data_ricerca - dt.timedelta(days=15)
-df_section=df_sensori[df_sensori.nometipologia.isin(TIPOLOGIE)]
+# aggiunto sort casuale per parallelizzazione
+df_section=df_sensori[df_sensori.nometipologia.isin(TIPOLOGIE)].sample(frac=1)
 #ciclo sui sensori:
 # strutturo la richiesta
 id_operatore=1
@@ -168,7 +193,7 @@ for row in df_section.itertuples():
     
     #ho selezionato il periodo atteso: estraggo il dataframe degli elementi attesi
     df=attesi.isin(element['data_e_ora'])
-    #eseguo il ciclo di richiesta sui dati mancanti
+    #eseguo il ciclo di richiesta sui dati mancanti        
     for dato_mancante in attesi[~df]:
         frame_dati["start"]=dato_mancante.strftime("%Y-%m-%d %H:%M")
         frame_dati["finish"]=dato_mancante.strftime("%Y-%m-%d %H:%M")
@@ -194,37 +219,43 @@ for row in df_section.itertuples():
         else:
             if (eval(DEBUG)):
                 logging.warning("Attenzione: dato di "+str(row.idsensore)+ " ASSENTE nel REM per "+ dato_mancante.strftime("%Y-%m-%d %H:%M"))
-     # prima di chiudere il ciclo chiedo la raffica del vento
-    if(row.nometipologia=='VV' or row.nometipologia=='DV'):
-        id_operatore=3         
-        frame_dati["operator_id"]=id_operatore
-        try:
-            aa=Richiesta_remwsgwy(frame_dati)
-        except:
-            aa=[]
-        if (len(aa)>2):
-        # prendo solo il primo elemento
-            misura=aa[1]['datarow'].split(";")[1]
-            valido=aa[1]['datarow'].split(";")[2]
-            QueryInsert=Inserisci_in_realtime(IRIS_SCHEMA_NAME,IRIS_TABLE_NAME,\
-            row.idsensore,row.nometipologia,id_operatore,data_ricerca,misura,AUTORE)
+
+        # prima di chiudere il ciclo chiedo la raffica del vento        
+        if(row.nometipologia=='VV' or row.nometipologia=='DV'):            
+            id_operatore_raff = 3         
+            frame_dati["operator_id"]=id_operatore_raff
             try:
-                conn.execute(QueryInsert)
-                if (eval(DEBUG)):
-                    logging.info("+++"+str(row.idsensore)+" "+ data_ricerca+" "+str(misura))
+                aa=Richiesta_remwsgwy(frame_dati)
             except:
-                        if(eval(DEBUG)):
-                            logging.error("Query non riuscita! per "+str(row.idsensore))
-        else:
-            if (eval(DEBUG)):
-                logging.warning("Attenzione: dato di "+h+ " sensore "+str( row.idsensore)+ " ASSENTE nel REM")
-    #fine ciclo sensore
+                aa=[]
+            if (len(aa)>2):
+            # prendo solo il primo elemento
+                misura=aa[1]['datarow'].split(";")[1]
+                valido=aa[1]['datarow'].split(";")[2]
+                QueryInsert=Inserisci_in_realtime(IRIS_SCHEMA_NAME,IRIS_TABLE_NAME,\
+                row.idsensore,row.nometipologia,id_operatore_raff,dato_mancante,misura,AUTORE)
+                try:
+                    conn.execute(QueryInsert)
+                    if (eval(DEBUG)):
+                       logging.info("+++++++Query eseguita (id_oreratore 3) per "+str(row.idsensore)+" "+ dato_mancante.strftime("%Y-%m-%d %H:%M"))                   
+                except:
+                    if(eval(DEBUG)):
+                       logging.error(QueryInsert+"non riuscita! per "+str(row.idsensore)+" "+ dato_mancante.strftime("%Y-%m-%d %H:%M"))
+
+            else:
+                if (eval(DEBUG)):
+                    logging.warning("Attenzione: dato di "+h+ " sensore "+str( row.idsensore)+ " ASSENTE nel REM")
+            
+        #fine ciclo sensore
+
 QueryDelete='DELETE FROM '+'"'+IRIS_SCHEMA_NAME+'"."'+IRIS_TABLE_NAME+'"' +' WHERE data_e_ora <'+"'"+data_elimina.strftime("%Y-%m-%d %H:%M")+"'"
-try:
-    conn.execute(QueryDelete)
-    if (eval(DEBUG)):
-        logging.info("+++pulizia dati eseguita")
-except:
-    logging.error("ERR: Pulizia dati non riuscita")
+if purge:
+    try:
+        conn.execute(QueryDelete)
+        if (eval(DEBUG)):
+            logging.info("+++pulizia dati eseguita")
+    except:
+        logging.error("ERR: Pulizia dati non riuscita")
+
 print("Recupero terminato per",TIPOLOGIE,"inizio",s,"fine", dt.datetime.now())
 logging.info("Recupero terminato per {0} inizio "+s.strftime("%Y-%m-%d %H:%M:%s")+ " fine "+ dt.datetime.now().strftime("%Y-%m-%d %H:%M:%s"),format(h))
