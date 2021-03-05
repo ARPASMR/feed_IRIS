@@ -34,6 +34,12 @@ if (AUTORE==None):
     REMWS_GATEWAY=os.getenv('REMWS_GATEWAY')
     # trasformo la stringa in lista
 
+ID_RETE=os.getenv('ID_RETE')
+if ID_RETE is None:
+    SID_RETE = '(1,2,4)'
+else:
+    SID_RETE = '(' + ID_RETE + ')'
+
 url=REMWS_GATEWAY    
 TIPOLOGIE=h.split()
 # inizializzazione delle date: datafine è in UTC+1
@@ -101,7 +107,7 @@ engine = create_engine('postgresql+pg8000://'+IRIS_USER_ID+':'+IRIS_USER_PWD+'@'
 conn=engine.connect()
 
 #preparazione dell'elenco dei sensori
-Query='Select *  from "dati_di_base"."anagraficasensori" where "anagraficasensori"."datafine" is NULL and idrete in (1,2,4);'
+Query='Select *  from "dati_di_base"."anagraficasensori" where "anagraficasensori"."datafine" is NULL and idrete in ' + SID_RETE +';'
 df_sensori=pd.read_sql(Query, conn)
 
 
