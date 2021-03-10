@@ -150,30 +150,36 @@ for row in df_section.itertuples():
     # frequenza 5 minuti (pluviometri ETG): function=3, idperiodo=1
     # frequenza 10 minuti (pluviometri PA): function=1, idperiodo=1
     #
-     # selezione degli idrometri con frequenza 5 minuti
+    
+    frame_dati["start"]=data_ricerca.strftime("%Y-%m-%d %H:%M")
+    frame_dati["finish"]=data_ricerca.strftime("%Y-%m-%d %H:%M")     
+        
     if(row.frequenza==60):
         id_periodo=3
         frame_dati["start"]=ora.strftime("%Y-%m-%d %H:%M")
         frame_dati["finish"]=ora.strftime("%Y-%m-%d %H:%M")
         data_insert=ora
-    else:
     # selezione degli idrometri con frequenza 5 minuti
-        if (row.frequenza==5):
-             id_operatore=1
+    elif (row.frequenza==5):
              id_periodo=10
-        else:
-             function=1
+    elif (row.frequenza==10):
              id_periodo=1
-        frame_dati["start"]=data_ricerca.strftime("%Y-%m-%d %H:%M")
-        frame_dati["finish"]=data_ricerca.strftime("%Y-%m-%d %H:%M")     
-    if(row.nometipologia=='PP'):
-        id_operatore=4
-        function=3
+    elif (row.frequenza==15):
+             id_periodo=11
+    elif (row.frequenza==30):
+             id_periodo=2
+    else:
+             function=1
+             id_periodo=14 # se non rientra nelle altre granularità usa valore istantaneo 
+             
+    if(row.nometipologia=='PP'): 
+        id_operatore=4   #valore cumulato
+        function=3       #valore calcolato
         if(row.frequenza>5):
             function=1
     else:
-         id_operatore=1
-         function=1
+         id_operatore=1  #valore medio
+         function=1      #valore rilevato
             
     frame_dati["operator_id"]=id_operatore
     frame_dati["function_id"]=function
