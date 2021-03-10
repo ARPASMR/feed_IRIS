@@ -1,5 +1,5 @@
 # feed IRIS
-Alimentazione di IRIS tramite script python in sostituzione di recupero_RT
+Alimentazione di IRIS tramite script python
 
 # prerequisiti
 1. rwmwsgwyd funzionante
@@ -9,7 +9,7 @@ Alimentazione di IRIS tramite script python in sostituzione di recupero_RT
 # utilizzo
 Il recupero viene gestito dal launcher che accetta in ingresso tre parametri
 ```
-./launch_feed.sh  arg1 arg2 arg3
+./launch_feed.sh  arg1 arg2 arg3 arg4
 ```
 
 _arg1_ minuto al quale esegue il comando
@@ -18,28 +18,26 @@ _arg2_ flag per recupero: *R* esegue il recupero, ogni altro carattere non esegu
 
 _arg3_ tempo in secondi tra una esecuzione e la successiva (*facoltativo, default 3600*)
 
+_arg4_ in caso si voglia recuperare una data in particolare arg4 è "S"
+
 
 # ENV
 Nel container sono già esplicitate le variabili d'ambiente di base:
 
 IRIS_USER_ID *postgres*
-
 IRIS_DB_NAME *iris_base*
-
 IRIS_DB_HOST *10.10.0.19*
 
 Devono essere specificate le variabili:
 
 DEBUG *True* scrive tutti gli errori o gli inserimenti dei dati, *False* scrive solo le informazioni essenziali
-
 TIPOLOGIE elenco delle tipologie per cui esegue l'alimentazione/recupero (*vedi esempio*)
-
 MINUTES numero di minuti che considera per il recupero o l'alimentazione diretta (*vedi note*)
-
 IRIS_USER_PWD password dell'utente IRIS_USER_ID
-
 NAME nome dell'autore dell'inserimento
-
+ID_RETE se non è settato di default prende le reti ARPA (1,2,4), altrimenti indicare le singole reti separate da virgola. 
+    Dove 3= lampo, 5= fuori regione, 6 in regione ma di altri enti 
+    ex. ID_RETE="1,2,6" considera rete Aria, CMG e Altro (Consorzi, CGP, ETV...)
 
 # esempio
 ```
