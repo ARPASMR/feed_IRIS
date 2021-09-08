@@ -38,7 +38,9 @@ NAME nome dell'autore dell'inserimento
 ID_RETE se non è settato di default prende le reti ARPA (1,2,4), altrimenti indicare le singole reti separate da virgola. 
     Dove 3= lampo, 5= fuori regione, 6 in regione ma di altri enti 
     ex. ID_RETE="1,2,6" considera rete Aria, CMG e Altro (Consorzi, CGP, ETV...)
-
+Nel caso si voglia recuperare da una data particolare (arg4=S) è nesessario impostare una variabile d'ambiente DATAFINE in formato "%Y%m%d%H%M".
+Alla fine del recupero il job si ferma (attenzione ad eventuali flag docker di restart automatici!)
+...
 # esempio
 ```
 docker run -d --rm -v "$PWD":/usr/src/myapp -w /usr/src/myapp -e "IRIS_USER_ID=postgres" -e "IRIS_USER_PWD=<password>" -e "IRIS_DB_NAME=iris_base" -e "IRIS_DB_HOST=10.10.0.19" -e "TIPOLOGIE=I PP T UR N RG PA VV DV" -e "DEBUG=True" -e "MINUTES=1440" --name "recupero_all" arpasmr/feed_iris ./launch_feed.sh 8 R 3600
